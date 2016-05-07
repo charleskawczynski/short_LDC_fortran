@@ -1,0 +1,5 @@
+# Don't include log files from when 
+*.exe
+*.dat
+*.mod
+*.o

@@ -1,13 +1,12 @@
-      ! This is a small 3-D Lid-Driven Cavity incompressible flow solver in Fortran.
-      ! Details:
-      !      - Staggered grid with uniform spacing is used: dx=dy=dz=h
+      ! This is a 200 line 3-D Lid-Driven Cavity incompressible flow solver in Fortran. Details:
+      !      - Staggered grid with uniform spacing: dx=dy=dz=h
       !      - The PPE is solved, to enforce div(u)=0, with red-black Gauss-Seidel method
       !      - Time marching: Explicit Euler (1st order accurate)
+      !      - Spatial discretization: 2nd order accurate, 1st order accurate boundary treatment
       !      - Pressure is treated purely implicitly
       !      - One ghost cell surrounds all interior cells
       !      - OpenMP parallelization is implemented
       !      - Compile command: "gfortran -fopenmp -std=gnu -O3 -g main.f90 -o main"
-      ! 
       ! Developed by Charlie Kawczynski.
       module PPE_solver
       implicit none
@@ -34,25 +33,27 @@
       use PPE_solver
       implicit none
       integer,parameter :: cp = selected_real_kind(14)
-      integer,parameter :: N = 45
       real(cp),dimension(:,:,:),allocatable :: p,divU,u,ustar,v,vstar,w,wstar
       real(cp),dimension(:,:,:),allocatable :: E1_x,E2_x,E1_y,E2_y,E1_z,E2_z
-      real(cp) :: h,dt,Re,hdt_inv,h_inv,dt_inv,Re_inv,h2,h2_inv,fact,KE,KE_old,KE_temp,dV,tol
-      integer :: i,j,k,N_output,N_PPE,iter_PPE,iter,N_iter
+      real(cp) :: h,dt,Re,hdt_inv,h_inv,dt_inv,Re_inv,h2,h2_inv,fact,KE,KE_old,KE_temp,dV,tol,delta_BL
+      integer :: i,j,k,N,N_output,N_PPE,iter_PPE,iter,N_iter
 
-      h = 1.0_cp/real(N,cp)            ! spatial step size (hard coded and uniform)
       Re = 400.0_cp                    ! Reynolds number
-      N_iter = 10**5                   ! number of time steps
       dt = 1.0_cp*10.0_cp**(-3.0_cp)   ! time step
+      N_iter = 10**5                   ! number of time steps
       N_PPE = 5                        ! number of PPE iterations
+
+      delta_BL = 1.0_cp/sqrt(Re)       ! approximate boundary layer thickness
+      N = floor(2.0_cp/delta_BL)       ! number of cells in each direction
+      h = 1.0_cp/real(N,cp)            ! spatial step size (hard coded and uniform)
       N_output = 100                   ! output transient data every N_output time steps
-      tol = 1.0_cp*10.0_cp**(-12.0_cp) ! stops simulation when |KE-KE_old|<tol
+      tol = 1.0_cp*10.0_cp**(-10.0_cp) ! stops simulation when |KE-KE_old|<tol
+      if (N.gt.150) then; write(*,*) 'are you sure you want this large of a mesh? N=',N; stop 'done'; endif
 
       ! Initialize data
-      KE_old = 0.0_cp; KE = 0.0_cp; fact = 1.0_cp/6.0_cp; h_inv = 1.0_cp/h; h2 = h**2.0_cp; h2_inv = 1.0_cp/h2
-      Re_inv = 1.0_cp/Re; dt_inv = 1.0_cp/dt; dV = h**3.0_cp; hdt_inv = h_inv*dt_inv
-      write(*,*) '3-D Lid-driven cavity flow. Re,h,dt,N_iter,N_PPE:'
-      write(*,*) Re,h,dt,N_iter,N_PPE
+      KE_old = 0.0_cp; KE = 0.0_cp; fact = 1.0_cp/6.0_cp; h_inv = 1.0_cp/h; h2 = h**2.0_cp
+      Re_inv = 1.0_cp/Re; dt_inv = 1.0_cp/dt; dV = h**3.0_cp; hdt_inv = h_inv*dt_inv; h2_inv = 1.0_cp/h2
+      write(*,*) '3-D Lid-driven cavity flow. Re,N,h,dt,N_iter,N_PPE:'; write(*,*) Re,N,h,dt,N_iter,N_PPE
       write(*,*) ''
 
       allocate(u(N+3,N+2,N+2),ustar(N+3,N+2,N+2),E1_x(N+2,N+3,N+3),E2_x(N+2,N+3,N+3),divU(N+2,N+2,N+2))
@@ -167,7 +168,7 @@
       !$OMP END PARALLEL DO
 
       open(2,file='output/slice.dat') ! Export solution at center plane
-      write(2,*) 'TITLE="3-D CUBIC LDC AT CENTER PLANE"'
+      write(2,*) 'TITLE="3-D CUBIC LDC AT CENTER PLANE, Re=',Re,'dt=',dt,'N_PPE=',N_PPE,'"'
       write(2,*) 'VARIABLES = "x","y","u","v","p","divU"'
       write(2,*) 'ZONE, I=',N,',J=',N,' DATAPACKING = POINT'
       k=N/2; do j=2,N+1; do i=2,N+1
@@ -176,7 +177,7 @@
       enddo; enddo; close(2)
 
       open(3,file='output/solution.dat') ! Export solution at cell centers
-      write(3,*) 'TITLE="3-D CUBIC LDC AT CELL CENTERS"'
+      write(3,*) 'TITLE="3-D CUBIC LDC AT CELL CENTERS, Re=',Re,'dt=',dt,'N_PPE=',N_PPE,'"'
       write(3,*) 'VARIABLES = "x","y","z","u","v","w","p","divU"'
       write(3,*) 'ZONE, I=',N,',J=',N,',K=',N,' DATAPACKING = POINT'
       do k=2,N+1; do j=2,N+1; do i=2,N+1
@@ -186,7 +187,7 @@
       enddo; enddo; enddo; close(3)
 
       open(5,file='output/solution_n.dat') ! Export solution at nodes
-      write(5,*) 'TITLE="3-D CUBIC LDC AT CELL CORNERS"'
+      write(5,*) 'TITLE="3-D CUBIC LDC AT CELL CORNERS, Re=',Re,'dt=',dt,'N_PPE=',N_PPE,'"'
       write(5,*) 'VARIABLES = "x","y","z","u","v","w"'
       write(5,*) 'ZONE, I=',N+1,',J=',N+1,',K=',N+1,' DATAPACKING = POINT'
       do k=2,N+2; do j=2,N+2; do i=2,N+2
@@ -196,5 +197,4 @@
       enddo; enddo; enddo; close(5)
 
       deallocate(p,divU,u,v,w,ustar,vstar,wstar,E1_x,E1_y,E1_z,E2_x,E2_y,E2_z)
-
      end program

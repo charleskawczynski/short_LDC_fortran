@@ -18,4 +18,4 @@ Details:
 
 - Compile command: "gfortran -fopenmp -std=gnu -O3 -g main.f90 -o main"
 
-Developed by Charlie Kawczynski.
+Developed by Charlie Kawczynski. Email: charliekawczynski@gmail.com

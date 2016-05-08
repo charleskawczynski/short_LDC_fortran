@@ -12,17 +12,17 @@
       implicit none
       integer,parameter :: cp = selected_real_kind(14)
       contains
-      subroutine red_black(p,divU,fact,N,h,odd)
+      subroutine red_black(p,divU,fact,N,h2,odd)
       implicit none
       integer,intent(in) :: N
       integer,dimension(3),intent(in) :: odd
-      real(cp),intent(in) :: fact,h
+      real(cp),intent(in) :: fact,h2
       real(cp),dimension(N+2,N+2,N+2),intent(in) :: divU
       real(cp),dimension(N+2,N+2,N+2),intent(inout) :: p
       integer :: i,j,k
       !$OMP PARALLEL DO
       do k=2+odd(3),N+1,2; do j=2+odd(2),N+1,2; do i=2+odd(1),N+1,2
-      p(i,j,k)=fact*(p(i+1,j,k)+p(i,j+1,k)+p(i,j,k+1)+p(i-1,j,k)+p(i,j-1,k)+p(i,j,k-1)-divU(i,j,k)*h)
+      p(i,j,k)=fact*(p(i+1,j,k)+p(i,j+1,k)+p(i,j,k+1)+p(i-1,j,k)+p(i,j-1,k)+p(i,j,k-1)-divU(i,j,k)*h2)
       enddo; enddo; enddo
       !$OMP END PARALLEL DO
       end subroutine
@@ -31,26 +31,26 @@
       program main
       use PPE_solver
       implicit none
-      real(cp),dimension(:,:,:),allocatable :: p,divU,u,ustar,v,vstar,w,wstar,E1_x,E2_x,E1_y,E2_y,E1_z,E2_z
-      real(cp) :: h,dt,Re,hdt_inv,h_inv,dt_inv,Re_inv,h2,h2_inv,dt4,dt_h_inv,dV8
-      real(cp) :: fact,KE,KE_old,KE_temp,dV,tol,delta_BL,max_divU,dt_h2Re_inv
+      real(cp),dimension(:,:,:),allocatable :: p,divU,u,ustar,v,vstar,w,wstar
+      real(cp),dimension(:,:,:),allocatable :: E1_x,E2_x,E1_y,E2_y,E1_z,E2_z
+      real(cp) :: h,dt,Re,hdt_inv,h_inv,dt_inv,Re_inv,h2,dt4
+      real(cp) :: h2_inv,fact,KE,KE_old,KE_temp,dV,tol,max_divU,dt_h2Re_inv
       integer :: i,j,k,N,N_output,N_PPE,iter_PPE,iter,N_iter
 
-      Re = 400.0_cp                                ! Reynolds number
-      dt = 1.0_cp*10.0_cp**(-3.0_cp)               ! time step
-      N_iter = 10**5                               ! number of time steps
-      N_PPE = 5                                    ! number of PPE iterations
+      Re = 400.0_cp                                    ! Reynolds number
+      N_iter = 10**5                                   ! number of time steps
+      N_PPE = 5                                        ! number of PPE iterations
+      N_output = 100                                   ! output transient data every N_output time steps
+      tol = 1.0_cp*10.0_cp**(-6.0_cp)                  ! stops simulation when |KE-KE_old|/dt < tol
+      N = 40                                           ! number of cells in each direction (for DNS)
+      dt = 1.0_cp*10.0_cp**(-2.0_cp)                   ! time step hard coded
 
-      delta_BL = 1.0_cp/sqrt(Re)                   ! approximate boundary layer thickness
-      N = maxval((/floor(2.0_cp/delta_BL),40/))    ! number of cells in each direction, N ~ Re**(3/4) for DNS
-      h = 1.0_cp/real(N,cp)                        ! spatial step size (hard coded and uniform)
-      N_output = 100                               ! output transient data every N_output time steps
-      tol = 1.0_cp*10.0_cp**(-6.0_cp)              ! stops simulation when |KE-KE_old|/dt < tol
+      h = 1.0_cp/real(N,cp)                            ! spatial step size (hard coded and uniform)
       if (N.gt.150) then; write(*,*) 'are you sure you want this large of a mesh? N=',N; stop 'done'; endif
 
       ! Initialize data
-      KE_old=0.0_cp; KE=0.0_cp;fact=1.0_cp/6.0_cp;h_inv=1.0_cp/h;h2=h**2.0_cp;dt_h2Re_inv=dt/(h2*Re);dt_h_inv=dt/h
-      Re_inv=1.0_cp/Re;dt_inv=1.0_cp/dt;dV=h**3.0_cp;hdt_inv=h_inv*dt_inv;h2_inv=1.0_cp/h2; dt4=0.25_cp*dt;dV8=dV/8.0_cp
+      KE_old = 0.0_cp; KE = 0.0_cp; fact = 1.0_cp/6.0_cp; h_inv = 1.0_cp/h; h2 = h**2.0_cp; dt_h2Re_inv = dt/(Re*h**2)
+      Re_inv = 1.0_cp/Re; dt_inv = 1.0_cp/dt; dV = h**3.0_cp; hdt_inv = h_inv*dt_inv; h2_inv = 1.0_cp/h2; dt4 = 0.25_cp*dt
       write(*,*) '3-D Lid-driven cavity flow. Re,N,h,dt,N_iter,N_PPE:'; write(*,*) Re,N,h,dt,N_iter,N_PPE
       write(*,*) ''
       allocate(u(N+3,N+2,N+2),ustar(N+3,N+2,N+2),E1_x(N+2,N+3,N+3),E2_x(N+2,N+3,N+3),divU(N+2,N+2,N+2))
@@ -67,6 +67,7 @@
       write(1,*) 'ZONE DATAPACKING = POINT'
 
       do iter=1,N_iter ! Momentum equation
+
         !$OMP PARALLEL DO
         do k=2,N+2; do j=2,N+2; do i=2,N+2 ! Advection term in form d/dxj (uj ui)
         ! d/dxj (uj ui) for i=j
@@ -114,19 +115,19 @@
         !$OMP END PARALLEL DO
 
         do iter_PPE=1,N_PPE ! solve PPE: red-black Gauss-Seidel
-          call red_black(p,divU,fact,N,h,(/0,0,0/)); call red_black(p,divU,fact,N,h,(/1,0,0/))
-          call red_black(p,divU,fact,N,h,(/0,1,0/)); call red_black(p,divU,fact,N,h,(/0,0,1/))
-          call red_black(p,divU,fact,N,h,(/1,1,1/)); call red_black(p,divU,fact,N,h,(/0,1,1/))
-          call red_black(p,divU,fact,N,h,(/1,0,1/)); call red_black(p,divU,fact,N,h,(/1,1,0/))
+          call red_black(p,divU,fact,N,h2,(/0,0,0/)); call red_black(p,divU,fact,N,h,(/1,0,0/))
+          call red_black(p,divU,fact,N,h2,(/0,1,0/)); call red_black(p,divU,fact,N,h,(/0,0,1/))
+          call red_black(p,divU,fact,N,h2,(/1,1,1/)); call red_black(p,divU,fact,N,h,(/0,1,1/))
+          call red_black(p,divU,fact,N,h2,(/1,0,1/)); call red_black(p,divU,fact,N,h,(/1,1,0/))
           p( 1 ,:,:) = p( 2 ,:,:); p(:, 1 ,:) = p(:, 2 ,:); p(:,:, 1 ) = p(:,:, 2 ) ! Apply p BCs
           p(N+2,:,:) = p(N+1,:,:); p(:,N+2,:) = p(:,N+1,:); p(:,:,N+2) = p(:,:,N+1) ! Apply p BCs
         enddo
 
         !$OMP PARALLEL DO
         do k=2,N+1; do j=2,N+1; do i=2,N+1 ! Pressure correction
-          u(i,j,k) = ustar(i,j,k) - dt_h_inv*(p(i,j,k) - p(i-1,j,k))
-          v(i,j,k) = vstar(i,j,k) - dt_h_inv*(p(i,j,k) - p(i,j-1,k))
-          w(i,j,k) = wstar(i,j,k) - dt_h_inv*(p(i,j,k) - p(i,j,k-1))
+          u(i,j,k) = ustar(i,j,k) - dt*(h_inv*(p(i,j,k) - p(i-1,j,k)))
+          v(i,j,k) = vstar(i,j,k) - dt*(h_inv*(p(i,j,k) - p(i,j-1,k)))
+          w(i,j,k) = wstar(i,j,k) - dt*(h_inv*(p(i,j,k) - p(i,j,k-1)))
         enddo; enddo; enddo
         !$OMP END PARALLEL DO
 
@@ -150,7 +151,7 @@
           divU(i,j,k) = h_inv*(u(i+1,j,k)-u(i,j,k)+v(i,j+1,k)-v(i,j,k)+w(i,j,k+1)-w(i,j,k))
           enddo; enddo; enddo
           !$OMP END PARALLEL DO
-          KE_old = KE_temp; KE_old = KE_old*dV8
+          KE_old = KE_temp; KE_old = 0.25_cp*KE_old*dV
           if ((iter.gt.1).and.(abs(KE-KE_old)*dt_inv.lt.tol)) then; write(*,*) 'Exited early'; exit
           endif; max_divU = maxval(divU)
           write(1,*) iter*dt,KE,max_divU; flush(1)
@@ -197,4 +198,4 @@
       enddo; enddo; enddo; close(5)
 
       deallocate(p,divU,u,v,w,ustar,vstar,wstar,E1_x,E1_y,E1_z,E2_x,E2_y,E2_z)
-     end program
+      end program
